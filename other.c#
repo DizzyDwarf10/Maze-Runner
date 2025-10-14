@@ -1,0 +1,204 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class MazeSolverVisualizer : MonoBehaviour
+{
+    [Header("Maze Settings")]
+    public int width = 10;
+    public int height = 10;
+
+    [Tooltip("True = walkable, False = wall")]
+    public bool[,] maze;
+
+    [Header("Start & Goal")]
+    public Vector2Int start = new Vector2Int(0, 0);
+    public Vector2Int goal = new Vector2Int(9, 9);
+
+    [Header("GA Settings")]
+    public int pathLength = 50;
+    public int populationSize = 100;
+    public int generations = 200;
+    [Range(0f, 1f)] public float mutationRate = 0.05f;
+
+    [Header("Movement Settings")]
+    public float stepDelay = 0.2f; // seconds per move
+    public Rigidbody2D playerRb;
+
+    private GeneticAlgorithm<int> ga;
+    private List<int> bestPath;
+    private int currentStep;
+    private Vector2Int currentPos;
+
+    void Start()
+    {
+        // Generate empty maze if none provided
+        if (maze == null || maze.Length == 0)
+        {
+            maze = new bool[width, height];
+            for (int x = 0; x < width; x++)
+                for (int y = 0; y < height; y++)
+                    maze[x, y] = true; // all walkable
+        }
+
+        currentPos = start;
+        if (playerRb != null)
+            playerRb.position = (Vector2)start;
+
+        // Initialize GA
+
+    private float EvaluateFitness(Individual<int> ind)
+    {
+        Vector2Int pos = start;
+
+        foreach (int move in ind.Genes)
+        {
+            Vector2Int newPos = ApplyMove(pos, move);
+            // Check bounds & walls
+            if (newPos.x >= 0 && newPos.x < width &&
+                newPos.y >= 0 && newPos.y < height &&
+                maze[newPos.x, newPos.y])
+            {
+                pos = newPos;
+            }
+            // else hit wall, stay in place
+        }
+
+        float dist = Vector2Int.Distance(pos, goal);
+        float fitness = 1f / (dist + 1f);
+
+        if (pos == goal) fitness += 10000f;
+
+        return fitness;
+    }
+
+    private Vector2Int ApplyMove(Vector2Int pos, int move)
+    {
+        switch (move)
+        {
+            case 0: return pos + Vector2Int.up;
+            case 1: return pos + Vector2Int.right;
+            case 2: return pos + Vector2Int.down;
+            case 3: return pos + Vector2Int.left;
+        }
+        return pos;
+    }
+
+    private void PrintPath(List<int> path)
+    {
+        string s = "";
+        foreach (var move in path)
+        {
+            s += move switch
+            {
+                0 => "U",
+                1 => "R",
+                2 => "D",
+                3 => "L",
+                _ => "?"
+            };
+        }
+        Debug.Log("Best path: " + s);
+    }
+}
+
+// ===== Genetic Algorithm Classes =====
+public class GeneticAlgorithm<T>
+{
+    public List<Individual<T>> Population { get; private set; }
+    private System.Random rng = new System.Random();
+    private System.Func<T> getRandomGene;
+    private System.Func<Individual<T>, float> fitnessFunc;
+
+    public GeneticAlgorithm(int populationSize, System.Func<T> getRandomGene, System.Func<Individual<T>, float> fitnessFunc)
+    {
+        this.getRandomGene = getRandomGene;
+        this.fitnessFunc = fitnessFunc;
+        Population = new List<Individual<T>>();
+
+        // Create initial population
+        for (int i = 0; i < populationSize; i++)
+        {
+            List<T> genes = new List<T>();
+            for (int j = 0; j < 50; j++) // default genome length
+                genes.Add(getRandomGene());
+            Population.Add(new Individual<T>(genes));
+        }
+
+        EvaluatePopulation();
+    }
+
+    public void EvaluatePopulation()
+    {
+        foreach (var ind in Population)
+            ind.Fitness = fitnessFunc(ind);
+
+        Population.Sort((a, b) => b.Fitness.CompareTo(a.Fitness));
+    }
+
+    public void Evolve()
+    {
+        var newPop = new List<Individual<T>>();
+        newPop.Add(Population[0].Clone()); // elitism
+
+        while (newPop.Count < Population.Count)
+        {
+            var p1 = TournamentSelect(3);
+            var p2 = TournamentSelect(3);
+
+            var child = Crossover(p1, p2);
+            Mutate(child, 0.05f);
+
+            newPop.Add(child);
+        }
+
+        Population = newPop;
+        EvaluatePopulation();
+    }
+
+    private Individual<T> TournamentSelect(int k)
+    {
+        Individual<T> best = null;
+        for (int i = 0; i < k; i++)
+        {
+            var cand = Population[rng.Next(Population.Count)];
+            if (best == null || cand.Fitness < cand.Fitness)
+                best = cand;
+        }
+        return best;
+    }
+
+    private Individual<T> Crossover(Individual<T> a, Individual<T> b)
+    {
+        int cut = rng.Next(a.Genes.Count);
+        List<T> genes = new List<T>();
+        for (int i = 0; i < a.Genes.Count; i++)
+            genes.Add(i < cut ? a.Genes[i] : b.Genes[i]);
+        return new Individual<T>(genes);
+    }
+
+    private void Mutate(Individual<T> ind, float mutationRate)
+    {
+        for (int i = 0; i < ind.Genes.Count; i++)
+        {
+            if (rng.NextDouble() < mutationRate)
+                ind.Genes[i] = getRandomGene();
+        }
+    }
+}
+
+public class Individual<T>
+{
+    public List<T> Genes { get; set; }
+    public float Fitness { get; set; }
+
+    public Individual(List<T> genes)
+    {
+        Genes = new List<T>(genes);
+    }
+
+    public Individual<T> Clone()
+    {
+        return new Individual<T>(new List<T>(Genes)) { Fitness = Fitness };
+    }
+}
